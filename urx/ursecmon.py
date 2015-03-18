@@ -36,6 +36,7 @@ class ParserUtils(object):
     def __init__(self, logLevel=logging.WARN):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logLevel)
+        self.isV30 = False
 
     def parse(self, data):
         """
@@ -50,7 +51,12 @@ class ParserUtils(object):
                 allData["SecondaryClientData"] = self._get_data(pdata, "!iB", ("size", "type"))
                 data = (pdata + data)[5:] # This is the total size so we resend data to parser
             elif ptype == 0:
-                allData["RobotModeData"] = self._get_data(pdata, "!iBQ???????Bd", ("size", "type", "timestamp", "isRobotConnected", "isRealRobotEnabled", "isPowerOnRobot", "isEmergencyStopped", "isSecurityStopped", "isProgramRunning", "isProgramPaused", "robotMode", "speedFraction"))
+                # this parses RobotModeData for versions >=3.0 (i.e. 3.0)
+                if psize == 38:
+                    self.isv30=True
+                    allData['RobotModeData'] = self._get_data(pdata, "!IBQ???????BBdd", ("size", "type", "timestamp", "isRobotConnected", "isRealRobotEnabled", "isPowerOnRobot", "isEmergencyStopped", "isSecurityStopped", "isProgramRunning", "isProgramPaused", "robotMode", "controlMode", "speedFraction", "speedScaling"))
+                else:
+                    allData["RobotModeData"] = self._get_data(pdata, "!iBQ???????Bd", ("size", "type", "timestamp", "isRobotConnected", "isRealRobotEnabled", "isPowerOnRobot", "isEmergencyStopped", "isSecurityStopped", "isProgramRunning", "isProgramPaused", "robotMode", "speedFraction"))
             elif ptype == 1:
                 tmpstr = ["size", "type"]
                 for i in range(0, 6):
@@ -256,21 +262,30 @@ class SecondaryMonitor(Thread):
                 continue
 
             self.lastpacket_timestamp = time.time() 
-
-            if self._dict["RobotModeData"]["robotMode"] == 0 \
+            
+            if self._parser.isv30:
+                if self._dict["RobotModeData"]["robotMode"] == 7 \
                             and self._dict["RobotModeData"]["isRealRobotEnabled"] == True \
                             and self._dict["RobotModeData"]["isEmergencyStopped"] == False \
                             and self._dict["RobotModeData"]["isSecurityStopped"] == False \
                             and self._dict["RobotModeData"]["isRobotConnected"] == True \
                             and self._dict["RobotModeData"]["isPowerOnRobot"] == True:
-                self.running = True
+                    self.running = True
             else:
-                if self.running == True:
-                    self.logger.error("Robot not running: " + str( self._dict["RobotModeData"]))
-                self.running = False
-            with self._dataEvent:
-                #print("X: new data")
-                self._dataEvent.notifyAll()
+                if self._dict["RobotModeData"]["robotMode"] == 0 \
+                            and self._dict["RobotModeData"]["isRealRobotEnabled"] == True \
+                            and self._dict["RobotModeData"]["isEmergencyStopped"] == False \
+                            and self._dict["RobotModeData"]["isSecurityStopped"] == False \
+                            and self._dict["RobotModeData"]["isRobotConnected"] == True \
+                            and self._dict["RobotModeData"]["isPowerOnRobot"] == True:
+                    self.running = True
+                else:
+                    if self.running == True:
+                        self.logger.error("Robot not running: " + str( self._dict["RobotModeData"]))
+                    self.running = False
+                with self._dataEvent:
+                    #print("X: new data")
+                    self._dataEvent.notifyAll()
 
     def _get_data(self):
         """
